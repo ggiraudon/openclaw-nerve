@@ -6,6 +6,7 @@
  *   npm run setup               # Interactive setup
  *   npm run setup -- --check    # Validate existing config
  *   npm run setup -- --defaults # Non-interactive with defaults
+ *   npm run setup -- --offline  # Skip gateway connectivity checks
  */
 
 /** Mask a token for display, with a guard for short tokens. */
@@ -52,6 +53,7 @@ const args = process.argv.slice(2);
 const isHelp = args.includes('--help') || args.includes('-h');
 const isCheck = args.includes('--check');
 const isDefaults = args.includes('--defaults');
+const isOffline = args.includes('--offline');
 
 type AccessMode = 'local' | 'network' | 'custom' | 'tailscale-ip' | 'tailscale-serve';
 
@@ -213,6 +215,7 @@ async function main(): Promise<void> {
   Options:
     --check                   Validate existing .env config and test gateway connection
     --defaults                Non-interactive setup using auto-detected values
+    --offline                 Skip gateway connectivity checks (for Docker/offline install)
     --access-mode <mode>      Explicit non-interactive access mode
     --help, -h                Show this help message
 
@@ -236,7 +239,7 @@ async function main(): Promise<void> {
     npm run setup -- --check                          # Validate existing config
     npm run setup -- --defaults                       # Auto-configure with detected values
     npm run setup -- --defaults --access-mode tailscale-serve
-`);
+    npm run setup -- --offline                   # Docker / offline install
     return;
   }
 
@@ -416,18 +419,22 @@ async function collectInteractive(
     });
   }
 
-  // Test connection
-  const rail = `  \x1b[2m│\x1b[0m`;
-  const testPrefix = process.env.NERVE_INSTALLER ? `${rail}  ` : '  ';
-  process.stdout.write(`${testPrefix}Testing connection... `);
-  const gwTest = await testGatewayConnection(config.GATEWAY_URL!, config.GATEWAY_TOKEN);
-  if (gwTest.ok) {
-    console.log(`\x1b[32m✓\x1b[0m ${gwTest.message}`);
+  // Test connection (skip in --offline mode)
+  if (!isOffline) {
+    const rail = `  \x1b[2m│\x1b[0m`;
+    const testPrefix = process.env.NERVE_INSTALLER ? `${rail}  ` : '  ';
+    process.stdout.write(`${testPrefix}Testing connection... `);
+    const gwTest = await testGatewayConnection(config.GATEWAY_URL!, config.GATEWAY_TOKEN);
+    if (gwTest.ok) {
+      console.log(`\x1b[32m✓\x1b[0m ${gwTest.message}`);
+    } else {
+      console.log(`\x1b[31m✗\x1b[0m ${gwTest.message}`);
+      dim('  Start it with: openclaw gateway start');
+      console.log('\n  Setup could not verify your gateway token. Fix the gateway or token, then re-run setup.\n');
+      process.exit(1);
+    }
   } else {
-    console.log(`\x1b[31m✗\x1b[0m ${gwTest.message}`);
-    dim('  Start it with: openclaw gateway start');
-    console.log('\n  Setup could not verify your gateway token. Fix the gateway or token, then re-run setup.\n');
-    process.exit(1);
+    dim('  Skipping connection test (--offline mode)');
   }
 
   // ── 2/5: Agent Identity ──────────────────────────────────────────
@@ -1030,14 +1037,18 @@ async function runCheck(config: EnvConfig): Promise<void> {
   if (isValidUrl(gwUrl)) {
     success(`GATEWAY_URL is valid: ${gwUrl}`);
 
-    // Test connectivity and token validity
-    process.stdout.write('  Testing gateway connection... ');
-    const gwTest = await testGatewayConnection(gwUrl, config.GATEWAY_TOKEN);
-    if (gwTest.ok) {
-      console.log(`\x1b[32m✓\x1b[0m ${gwTest.message}`);
+    // Test connectivity and token validity (skip in --offline mode)
+    if (!isOffline) {
+      process.stdout.write('  Testing gateway connection... ');
+      const gwTest = await testGatewayConnection(gwUrl, config.GATEWAY_TOKEN);
+      if (gwTest.ok) {
+        console.log(`\x1b[32m✓\x1b[0m ${gwTest.message}`);
+      } else {
+        console.log(`\x1b[31m✗\x1b[0m ${gwTest.message}`);
+        errors++;
+      }
     } else {
-      console.log(`\x1b[31m✗\x1b[0m ${gwTest.message}`);
-      errors++;
+      dim('  Skipping connection test (--offline mode)');
     }
   } else {
     fail(`GATEWAY_URL is invalid: ${gwUrl}`);
@@ -1204,15 +1215,20 @@ async function runDefaults(existing: EnvConfig, prereqs: PrereqResult): Promise<
     }
   }
 
-  process.stdout.write('  Testing gateway connection... ');
-  const gwTest = await testGatewayConnection(config.GATEWAY_URL!, config.GATEWAY_TOKEN);
-  if (gwTest.ok) {
-    console.log(`\x1b[32m✓\x1b[0m ${gwTest.message}`);
+  // Test connection (skip in --offline mode)
+  if (!isOffline) {
+    process.stdout.write('  Testing gateway connection... ');
+    const gwTest = await testGatewayConnection(config.GATEWAY_URL!, config.GATEWAY_TOKEN);
+    if (gwTest.ok) {
+      console.log(`\x1b[32m✓\x1b[0m ${gwTest.message}`);
+    } else {
+      console.log(`\x1b[31m✗\x1b[0m ${gwTest.message}`);
+      fail('Refusing to write .env because gateway auth could not be verified.');
+      console.log('');
+      process.exit(1);
+    }
   } else {
-    console.log(`\x1b[31m✗\x1b[0m ${gwTest.message}`);
-    fail('Refusing to write .env because gateway auth could not be verified.');
-    console.log('');
-    process.exit(1);
+    console.log('  Skipping connection test (--offline mode)');
   }
 
   if (existsSync(ENV_PATH)) {
