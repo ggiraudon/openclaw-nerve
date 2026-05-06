@@ -240,6 +240,7 @@ async function main(): Promise<void> {
     npm run setup -- --defaults                       # Auto-configure with detected values
     npm run setup -- --defaults --access-mode tailscale-serve
     npm run setup -- --offline                   # Docker / offline install
+`);
     return;
   }
 
